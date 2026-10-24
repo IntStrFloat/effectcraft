@@ -1,2 +1,4 @@
 [alias]
-xtask = "run --quiet --package xtask --"
+# Keep the running gate executable separate from the binary rebuilt by workspace integration
+# tests (Windows cannot replace an executable that is currently running).
+xtask = "run --quiet --package xtask --target-dir target/xtask-runner --"

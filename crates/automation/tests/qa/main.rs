@@ -7,5 +7,6 @@ mod compositing;
 mod harness;
 mod kinetic;
 mod lifecycle;
+mod motion_workflow;
 mod shapes;
 mod tracking;

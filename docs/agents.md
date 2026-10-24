@@ -101,6 +101,17 @@ See [MCP conventions](mcp.md) for core tools, resources, strict arguments, and r
 
 | Tool | What it does |
 |---|---|
+| `get_capabilities` | Actual backend/renderer, registered plugin API and explicit native Adobe project/SDK compatibility limits. |
+| `get_motion_workflow` | Read the fork's startup, scene-building, review and delivery guide. |
+| `list_plugins` | Registered own-API effects and WebAssembly loader availability; this is not an Adobe/OFX host. |
+| `load_effect_plugin {path}` | Load one sandboxed EffectCraft API-v1 `.wasm`/`.wat` file; automation read roots apply. |
+| `motion_catalog` | Six native 2D starter recipes and eight vibes; bespoke 3D and compositing remain available through commands. |
+| `plan_motion {recipe?, vibe?, brief?, name?, text?, width?, height?, frame_rate?, duration?, source_item?, transparent?, accent?}` | Inspect a deterministic construction plan and timing without editing. The client interprets natural language. |
+| `create_motion_scene {recipe?, vibe?, brief?, name?, text?, width?, height?, frame_rate?, duration?, source_item?, transparent?, accent?}` | Create a NEW editable composition in one atomic undo step, preserving existing items/comps. |
+| `animate_layer {comp, layer, motion?, start?, duration?, enter?, exit?, distance?, replace?, rest_time?}` | Entrance/hold/exit on an explicit target in comp seconds. Existing affected animation requires explicit replacement. |
+| `apply_effect_chain {comp, layer, effects, mode?}` | Ordered native/WASM effects with values/enabled flags, append or replace, atomically and one undo. |
+| `render_storyboard {comp?, times?, max_side?, columns?, transparent?}` | Actual sampled frames in one inline PNG atlas; at most 12 frames/8M pixels, no disk writes. |
+| `analyze_scene {comp?}` | Bounded structural audit with timing, source/dependency and unknown-effect warnings; reports truncation. |
 | `list_commands {filter?, enabled_only?, schemas?}` | Discover command ids, their param docs (and, with `schemas`, a JSON Schema each), and whether each can run now. |
 | `describe_command {command \| id}` | One command in full: label, menu, shortcut, params doc, JSON `schema`, enabled / `why`. |
 | `execute_command {command \| id, params?}` | Run any command (undoable). Unknown parameter keys are rejected with the accepted list. |
@@ -110,7 +121,7 @@ See [MCP conventions](mcp.md) for core tools, resources, strict arguments, and r
 | `get_layer {layer, comp?, time?, depth?, flat?}` | A layer's property tree (`depth` limits how many group levels expand). Every node has a `path`. |
 | `get_property {layer, path, comp?, time?}` | A leaf property's value at a time, keyframes and expression. Group paths (for example `geometryOptions`) contain children: inspect them with `get_layer`, then query a leaf such as `geometryOptions/extrusionDepth`. |
 | `set_property {layer, path, value?, time?, timeBase?, expression?, comp?}` | Sets a static value. With `time` it sets a keyframe (`timeBase: "comp"` for comp seconds); with `expression` it sets an expression. |
-| `add_keyframe {layer, path, time+value \| keys:[...], timeBase?, interpolation?, comp?}` | Adds keys (layer seconds, or comp seconds with `timeBase: "comp"`), then optionally applies linear/bezier/hold/easyEase. |
+| `add_keyframe {layer, path, time+value \| keys:[...], timeBase?, interpolation?, comp?}` | Atomically adds up to 4096 keys in one undo step (layer seconds, or comp seconds with `timeBase: "comp"`) and optionally applies linear/bezier/hold/easyEase. A bad later key or interpolation leaves no partial edit. |
 | `list_effects {filter?}` | Effect ids, names, categories, GPU / 32-bpc support and parameters. |
 | `list_fonts {query?, variable?, rescan?}` | Font families text layers can use, bundled and installed, with their styles, origin, whether each is a variable font and own-language name; `variable` lists only variable fonts; `rescan` picks up fonts installed since launch. |
 | `add_effect {layer, effect, values?, comp?}` | Apply an effect and set its parameters in one call and one undo step (a failing value leaves nothing applied); returns the instance path (`effects/#n`) and its parameter paths. |

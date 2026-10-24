@@ -1399,9 +1399,27 @@ mod tests {
     }
 
     /// A Microsoft family that isn't installed renders in its installed metric-compatible
-    /// substitute instead of Inter, and still reports itself missing (#1677).
+    /// substitute instead of Inter, and still reports itself missing (#1677). Use a child process
+    /// with synthetic fonts so installed Microsoft faces and parallel system scans cannot decide
+    /// whether the original family is missing; then verify that an installed original wins.
     #[test]
     fn microsoft_families_resolve_to_metric_compatible_substitutes() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            const CHILD: &str = "EFFECTCRAFT_TEST_ISOLATED_METRIC_ALIASES";
+            if std::env::var_os(CHILD).is_none() {
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "fonts::tests::microsoft_families_resolve_to_metric_compatible_substitutes", "--nocapture"])
+                    .env(CHILD, "1")
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+                return;
+            }
+        }
+        db().write().unwrap().scanned = true; // This test process uses only bundled and synthetic fonts.
+        assert!(resolve_in("Calibri", "Regular").is_none());
+        assert!(resolve_in("Cambria", "Regular").is_none());
         add_font_data(test_font("Carlito"));
         add_font_data(test_font("Caladea"));
         let calibri = resolve("Calibri", "Regular");
@@ -1413,6 +1431,21 @@ mod tests {
         let unknown = resolve("No Such Family 1677", "Regular");
         assert_eq!(face(unknown.face).info.family, DEFAULT_FAMILY);
         assert!(unknown.missing);
+
+        // Installing the genuine requested family supersedes an already-used substitute. The
+        // fixture contains original synthetic glyphs, not proprietary Microsoft font bytes.
+        for family in ["Calibri", "Cambria"] {
+            let data = Arc::new(test_font(family));
+            let names = read_faces_bytes(&data).into_iter().next().unwrap();
+            let id = push(&mut db().write().unwrap(), info_from(names, FaceData::Shared(data), "system"));
+            let original = resolve(family, "Regular");
+            assert_eq!(original.face, id, "installed original wins for {family}");
+            assert_eq!(face(original.face).info.family, family);
+            assert!(!original.missing && !original.synth_bold && !original.synth_italic);
+            let bold = resolve(family, "Bold");
+            assert_eq!(bold.face, id, "missing style is synthesized on the original family");
+            assert!(!bold.missing && bold.synth_bold && !bold.synth_italic);
+        }
     }
 
     #[test]

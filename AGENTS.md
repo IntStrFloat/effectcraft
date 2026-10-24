@@ -3,6 +3,12 @@
 These rules apply to every human and AI contributor. `CLAUDE.md` holds the working instructions; this
 file holds the rules that must never be broken. When the two disagree, this file wins.
 
+## Fork agent entry point
+
+Read [`docs/AGENT_MOTION_WORKFLOW.md`](docs/AGENT_MOTION_WORKFLOW.md) at the start of every
+session. For motion work, ensure a working backend, inspect its actual capabilities and use the
+plan, editable scene, multi-frame preview and verified delivery workflow described there.
+
 ## Never crash
 
 People trust EffectCraft with hours of work. A malformed project, PSD, SVG, Lottie or media file, a bad
@@ -76,12 +82,11 @@ reproduce an image (for example, point lists traced from someone else's icon).
    `crates/engine/src/demo.rs`, generators in `crates/effects`) are original work under the project licence
    and are listed in `ATTRIBUTION.md`.
 7. **When in doubt, leave it out** and draw or generate it yourself.
-8. **The one exception: first-party ArtCraft brand marks.** The ArtCraft name and logos in `docs/brand/`
-   are trademarks of the ArtCraft Team, not open source, usable only unmodified and only in the context of
-   EffectCraft under `docs/brand/LICENSE-brand.txt` (forks and modified versions must remove them). They still
-   need a sidecar and an `ATTRIBUTION.md` row (licence `LicenseRef-ArtCraft-Trademark`). No other
-   non-open asset is allowed, and this exception never covers third-party marks (Adobe, Discord, GitHub
-   and other logos stay out; draw a generic icon instead).
+8. **Upstream brand marks are omitted from this fork.** The ArtCraft name and logos are trademarks
+   of the original ArtCraft Team. The retained `docs/brand/LICENSE-brand.txt` records their terms;
+   it grants this independent modified fork no right to ship those marks. Do not reintroduce them.
+   Plain-text upstream attribution and required copyright notices remain. Third-party marks
+   (Adobe, Discord, GitHub and other logos) also stay out; draw a generic icon instead.
 
 ## 2. Clean-room code
 

@@ -64,6 +64,13 @@ impl ToolDef {
 
 /// Tools that only read.
 const READ_ONLY: &[&str] = &[
+    "get_capabilities",
+    "get_motion_workflow",
+    "list_plugins",
+    "motion_catalog",
+    "plan_motion",
+    "render_storyboard",
+    "analyze_scene",
     "command_list",
     "list_commands",
     "describe_command",
@@ -351,11 +358,15 @@ fn add_keyframe(b: &mut Backend, a: &Value) -> Result<Reply> {
         Some(_) => return Err(Error::BadArgs("`keys` must be an array of {time, value?}".into())),
         None => vec![obj(&[("time", Some(need(a, "time")?)), ("value", get(a, "value"))])],
     };
-    if keys.is_empty() {
-        return Err(Error::BadArgs("no keys".into()));
+    if keys.is_empty() || keys.len() > 4096 {
+        return Err(Error::BadArgs("give 1..4096 keys".into()));
     }
     let base = [("layer", Some(layer)), ("path", Some(path)), ("comp", comp)];
+    let mut steps = Vec::new();
     for k in &keys {
+        if !k.get("time").and_then(Value::as_f64).is_some_and(f64::is_finite) {
+            return Err(Error::BadArgs("every key needs a finite numeric `time`".into()));
+        }
         let mut p = obj(&base);
         p["time"] = need(k, "time")?.clone();
         if let Some(v) = get(k, "value") {
@@ -364,30 +375,39 @@ fn add_keyframe(b: &mut Backend, a: &Value) -> Result<Reply> {
         if let Some(tb) = get(a, "timeBase") {
             p["timeBase"] = tb.clone();
         }
-        b.exec("prop.addKey", p)?;
+        steps.push(json!({"command":"prop.addKey","params":p}));
     }
     let info = b.exec("prop.get", obj(&base))?;
-    if let Some(interp) = get(a, "interpolation").and_then(Value::as_str) {
+    if let Some(base) = get(a, "timeBase")
+        && !matches!(base.as_str(), Some("layer" | "comp"))
+    {
+        return Err(Error::BadArgs("`timeBase` must be layer or comp".into()));
+    }
+    if let Some(interp) = get(a, "interpolation") {
+        let interp = interp.as_str().ok_or_else(|| Error::BadArgs("`interpolation` must be a string".into()))?.to_ascii_lowercase();
+        let (command, params) = match interp.as_str() {
+            "easyease" | "ease" => ("keys.easyEase", json!({})),
+            "easyeasein" => ("keys.easyEase", json!({"which":"in"})),
+            "easyeaseout" => ("keys.easyEase", json!({"which":"out"})),
+            i @ ("linear" | "bezier" | "hold") => ("keys.interpolation", json!({"interpolation":i})),
+            other => return Err(Error::BadArgs(format!("unknown interpolation `{other}` (linear, bezier, hold, easyEase, easyEaseIn, easyEaseOut)"))),
+        };
         // Key selection works on the active comp.
         if let Some(c) = comp {
-            b.exec("comp.open", json!({"comp": c}))?;
+            steps.push(json!({"command":"comp.open","params":{"comp":c}}));
         }
         let sel: Vec<Value> = keys.iter().map(|k| json!({"layer": info["layer"], "prop": info["uid"], "time": k["time"]})).collect();
         let mut select = json!({"keys": sel});
         if let Some(tb) = get(a, "timeBase") {
             select["timeBase"] = tb.clone();
         }
-        b.exec("keys.select", select)?;
-        match interp.to_ascii_lowercase().as_str() {
-            "easyease" | "ease" => b.exec("keys.easyEase", json!({}))?,
-            "easyeasein" => b.exec("keys.easyEase", json!({"which": "in"}))?,
-            "easyeaseout" => b.exec("keys.easyEase", json!({"which": "out"}))?,
-            i @ ("linear" | "bezier" | "hold") => b.exec("keys.interpolation", json!({"interpolation": i}))?,
-            other => return Err(Error::BadArgs(format!("unknown interpolation `{other}` (linear, bezier, hold, easyEase, easyEaseIn, easyEaseOut)"))),
-        };
-        return json_reply(b.exec("prop.get", obj(&base))?);
+        steps.push(json!({"command":"keys.select","params":select}));
+        steps.push(json!({"command":command,"params":params}));
     }
-    json_reply(info)
+    // One tool call is one atomic edit, including key selection/interpolation. A bad later
+    // value must not leave the earlier keys or an altered active composition behind.
+    b.exec("engine.batch", json!({"steps":steps,"atomic":true,"label":"Add Keyframes"}))?;
+    json_reply(b.exec("prop.get", obj(&base))?)
 }
 
 fn render_frame(b: &mut Backend, a: &Value) -> Result<Reply> {
@@ -541,6 +561,83 @@ fn control(b: &mut Backend, a: &Value) -> Result<Reply> {
 
 static TOOLS: &[ToolDef] = &[
     ToolDef {
+        name: "get_capabilities",
+        description: "Inspect this backend's actual renderer, command/effect/export capabilities and WASM plugin availability, plus explicit Adobe compatibility limits. Start here before promising a workflow.",
+        bridge_only: false,
+        schema: crate::motion_tools::schema_empty,
+        run: crate::motion_tools::capabilities,
+    },
+    ToolDef {
+        name: "get_motion_workflow",
+        description: "Read the fork's full agent guide: backend startup, source preservation, purpose/style/timing, editable scene creation, multi-frame review, native export and reopen verification.",
+        bridge_only: false,
+        schema: crate::motion_tools::schema_empty,
+        run: crate::motion_tools::guide,
+    },
+    ToolDef {
+        name: "list_plugins",
+        description: "List actually registered EffectCraft plugin effects and whether this build can load the sandboxed WebAssembly API. Adobe SDK/AEX and native OFX plugins are not hosted.",
+        bridge_only: false,
+        schema: crate::motion_tools::schema_empty,
+        run: crate::motion_tools::plugins,
+    },
+    ToolDef {
+        name: "motion_catalog",
+        description: "Discover purpose-led starter recipes, styles and supported timing/layout controls. These compose native editable layers and keys; bespoke masks, tracking and 3D remain available through the full command registry.",
+        bridge_only: false,
+        schema: crate::motion_design::catalogue_schema,
+        run: crate::motion_design::catalogue,
+    },
+    ToolDef {
+        name: "load_effect_plugin",
+        description: "Load one EffectCraft API-v1 sandboxed WebAssembly plugin (.wasm/.wat), respecting automation read roots. This does not load Adobe AEX/SDK or native OFX plugins; inspect list_plugins afterwards.",
+        bridge_only: false,
+        schema: crate::motion_tools::load_plugin_schema,
+        run: crate::motion_tools::load_plugin,
+    },
+    ToolDef {
+        name: "plan_motion",
+        description: "Read-only plan from an explicit recipe, vibe, text/source item and timing. The client model interprets arbitrary briefs; this server returns deterministic native construction steps and assumptions.",
+        bridge_only: false,
+        schema: crate::motion_design::plan_schema,
+        run: crate::motion_design::plan,
+    },
+    ToolDef {
+        name: "create_motion_scene",
+        description: "Build a new editable motion composition from a purpose/style recipe, optionally using an existing source item. One atomic undo step; existing compositions and source items are preserved. Returns actual comp/layer ids and the construction plan.",
+        bridge_only: false,
+        schema: crate::motion_design::create_schema,
+        run: crate::motion_design::create,
+    },
+    ToolDef {
+        name: "animate_layer",
+        description: "Animate an explicitly targeted layer through entrance, hold and exit in composition seconds, including offset/stretched layers. One atomic edit; existing affected keys/expressions require explicit replace:true.",
+        bridge_only: false,
+        schema: crate::motion_design::animate_schema,
+        run: crate::motion_design::animate,
+    },
+    ToolDef {
+        name: "apply_effect_chain",
+        description: "Apply an ordered native/WASM effect stack atomically with one undo. Append preserves old effects; replace removes their properties/keys. Exact effect and parameter ids come from list_effects. A failed effect/value leaves no partial project edit.",
+        bridge_only: false,
+        schema: crate::motion_tools::chain_schema,
+        run: crate::motion_tools::chain,
+    },
+    ToolDef {
+        name: "render_storyboard",
+        description: "Render actual composition frames into one PNG atlas for reviewing motion phases. Read-only, no files: up to 12 samples/8M atlas pixels, with frame times, alpha coverage and comparison fingerprints. Identical frames are a warning, not artistic approval.",
+        bridge_only: false,
+        schema: crate::motion_preview::storyboard_schema,
+        run: crate::motion_preview::render_storyboard,
+    },
+    ToolDef {
+        name: "analyze_scene",
+        description: "Bounded read-only scene audit: layer spans, visibility, key timing, dependencies, cached source problems and unloaded effects. Reports truncation and warnings; does not certify artistic quality or After Effects pixel equivalence.",
+        bridge_only: false,
+        schema: crate::motion_preview::analyze_schema,
+        run: crate::motion_preview::analyze_scene,
+    },
+    ToolDef {
         name: "list_commands",
         description: "List engine commands: id, label, menu path, shortcut, `params` doc (e.g. `{name?, width?, height?, frameRate?, duration? (s)}`) and whether it can run now (`why` if not). Every menu item, shortcut and panel gesture maps to one of these ids; run them with execute_command. Narrow with `filter` (e.g. `layer.new`, `keys`, `effect`).",
         bridge_only: false,
@@ -670,7 +767,7 @@ static TOOLS: &[ToolDef] = &[
                     "time": {"type": "number", "description": "Key time in seconds (layer time)."},
                     "timeBase": {"type": "string", "enum": ["layer", "comp"], "description": "What `time` counts: layer time (the default) or comp time, as the Timeline shows it."},
                     "value": value_s(),
-                    "keys": {"type": "array", "items": {"type": "object", "properties": {"time": {"type": "number"}, "value": value_s()}, "required": ["time"]}, "description": "Several keys at once."},
+                    "keys": {"type": "array", "minItems":1, "maxItems":4096, "items": {"type": "object", "properties": {"time": {"type": "number"}, "value": value_s()}, "required": ["time"]}, "description": "Several keys atomically with one undo step."},
                     "interpolation": {"type": "string", "enum": ["linear", "bezier", "hold", "easyEase", "easyEaseIn", "easyEaseOut"]}
                 }),
                 &["layer", "path"],

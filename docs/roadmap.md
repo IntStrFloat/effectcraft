@@ -1,6 +1,6 @@
 # Roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (new file: milestones moved from ROADMAP.md, current focus and next steps with Opus 5.5 estimates) · **Target:** Adobe After Effects 2026
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (fork: motion workflow and multi-frame MCP review) · **Target:** Adobe After Effects 2026
 
 Forward-looking detail behind the [ROADMAP](../ROADMAP.md). The work list itself, one gap at a
 time, is [gaps.md](gaps.md); the numbers are in [target-app-parity.md](target-app-parity.md).
@@ -61,6 +61,10 @@ against After Effects in [gaps.md](gaps.md), not as milestones.
 | M12 | Performance: layer cache, parallel and GPU compositing, disk cache, motion tracking; GPU versions of the remaining CPU-only effects | Mostly done (benchmarks and hardware video: gaps 5, 15) |
 | M13 | Puppet, paint, Roto Brush, tracking, plug-in API, timeline depth, trained models | Done |
 | M14 | Built for agents: MCP server, CLI, control channel, Settings, shortcut editor, auto-save, crash recovery | Done |
+
+M14 fork extension (2026-10-24): [purpose-led motion workflow](motion-mcp.md), native editable
+starter scenes, explicit comp-time animation, atomic effects/keyframes, bounded structural
+audits and real multi-frame previews. Native Adobe project/SDK compatibility is not added.
 | M15 | The web app (WebAssembly, WebGPU) | Done |
 
 ## What's next, with estimates
@@ -83,5 +87,6 @@ To beta (≈ 75% ready and `.aep` opening): **≈ 350–620 h**. To full parity:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Fork M14: editable scene recipes, comp-time animation, structural audits and storyboard review |
 | 2026-10-10 | minor | Alpha gate: six core workflows checked; all pass, stage stays alpha |
 | 2026-10-10 | major | New file: milestones from ROADMAP.md, current focus, next steps with estimates |

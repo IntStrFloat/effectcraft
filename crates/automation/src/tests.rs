@@ -36,6 +36,104 @@ fn call_json(s: &mut McpServer, name: &str, args: Value) -> Value {
 }
 
 #[test]
+fn keyframe_tool_rejects_a_bad_later_key_or_interpolation_without_partial_edits() {
+    for broken in [
+        json!({"keys": [{"time": 0.0, "value": 0}, {"value": 100}]}),
+        json!({"keys": [{"time": 0.0, "value": 0}, {"time": 1.0, "value": 100}], "interpolation": "typo"}),
+        json!({"keys": [{"time": 0.0, "value": 0}, {"time": 1.0, "value": "not-a-number"}]}),
+    ] {
+        let mut s = server();
+        let comp = call_json(&mut s, "execute_command", json!({"command": "comp.new", "params": {"name": "Target"}}))["comp"].clone();
+        let layer = call_json(&mut s, "execute_command", json!({"command": "layer.newText", "params": {"text": "Keep"}}))["layer"].clone();
+        call_json(&mut s, "execute_command", json!({"command": "comp.new", "params": {"name": "Other"}}));
+        let before = call_json(&mut s, "get_project", json!({}));
+        let state = call_json(&mut s, "get_state", json!({}))["state"].clone();
+        let mut args = broken;
+        args["comp"] = comp;
+        args["layer"] = layer;
+        args["path"] = json!("transform/opacity");
+        let (content, failed) = call(&mut s, "add_keyframe", args.clone());
+        assert!(failed, "{args}: {content:?}");
+        assert_eq!(call_json(&mut s, "get_project", json!({})), before, "failed request changed the project: {args}");
+        assert_eq!(call_json(&mut s, "get_state", json!({}))["state"], state, "failed request changed editor selection: {args}");
+    }
+}
+
+#[test]
+fn fork_workflow_discovery_resources_and_prompt_are_available() {
+    let mut s = server();
+    let initialized = rpc(&mut s, 1, "initialize", json!({"protocolVersion":"2025-06-18"}));
+    assert!(initialized["capabilities"]["prompts"].is_object());
+    assert!(initialized["instructions"].as_str().unwrap().contains("render_storyboard"));
+    let capabilities = call_json(&mut s, "get_capabilities", json!({}));
+    assert_eq!(capabilities["compatibility"]["adobe_sdk_plugins"], false);
+    assert_eq!(capabilities["compatibility"]["adobe_projects"], false);
+    assert_eq!(capabilities["renderer"]["active"], "cpu");
+    let before = call_json(&mut s, "get_project", json!({}));
+    let guide = rpc(&mut s, 2, "resources/read", json!({"uri":"effectcraft://workflow"}));
+    assert_eq!(guide["contents"][0]["mimeType"], "text/markdown");
+    assert!(guide["contents"][0]["text"].as_str().unwrap().contains("EffectCraft"));
+    let prompts = rpc(&mut s, 3, "prompts/list", json!({}));
+    assert_eq!(prompts["prompts"][0]["name"], "motion_design");
+    let prompt = rpc(&mut s, 4, "prompts/get", json!({"name":"motion_design","arguments":{"brief":"Мягкое появление заголовка"}}));
+    assert!(prompt["messages"][0]["content"]["text"].as_str().unwrap().contains("Мягкое появление заголовка"));
+    assert_eq!(call_json(&mut s, "get_project", json!({})), before);
+    let (content, failed) = call(&mut s, "load_effect_plugin", json!({"path":"/not-an-adobe-host/plugin.aex"}));
+    assert!(failed && content[0]["text"].as_str().unwrap().contains("Adobe"));
+}
+
+#[test]
+fn own_wasm_plugin_loads_through_mcp_and_changes_actual_pixels() {
+    let mut s = McpServer::new(Backend::headless(effectcraft_host::session()));
+    let path = std::env::temp_dir().join(format!("effectcraft-motion-tint-{}.wat", std::process::id()));
+    let manifest = r#"{"api":1,"id":"org.intstrfloat.motion.tint-test","name":"Motion tint test","category":"Fork Tests","version":"1.0","params":[]}"#;
+    let escaped = manifest.replace('"', "\\\"");
+    let module = format!(
+        r#"(module
+        (memory (export "memory") 1)
+        (data (i32.const 16) "{escaped}")
+        (func (export "ec_api_version") (result i32) i32.const 1)
+        (func (export "ec_manifest_ptr") (result i32) i32.const 16)
+        (func (export "ec_manifest_len") (result i32) i32.const {})
+        (func (export "ec_alloc") (param i32) (result i32) i32.const 1024)
+        (func (export "ec_render") (param $px i32) (param $w i32) (param $h i32) (param i32) (param i32) (param f64) (param f64) (result i32)
+            (local $i i32) (local $end i32)
+            local.get $px local.set $i
+            local.get $px local.get $w local.get $h i32.mul i32.const 16 i32.mul i32.add local.set $end
+            block $done loop $pixels
+                local.get $i local.get $end i32.ge_u br_if $done
+                local.get $i f32.const 0 f32.store
+                local.get $i f32.const 1 f32.store offset=4
+                local.get $i f32.const 0 f32.store offset=8
+                local.get $i i32.const 16 i32.add local.set $i
+                br $pixels
+            end end i32.const 0))"#,
+        manifest.len()
+    );
+    std::fs::write(&path, module).unwrap();
+    let loaded = call_json(&mut s, "load_effect_plugin", json!({"path":path.to_string_lossy()}));
+    assert!(loaded.to_string().contains("org.intstrfloat.motion.tint-test"));
+    let plugins = call_json(&mut s, "list_plugins", json!({}));
+    assert_eq!(plugins["wasm"], true);
+    assert!(plugins.to_string().contains("org.intstrfloat.motion.tint-test"));
+    let comp = call_json(
+        &mut s,
+        "execute_command",
+        json!({"command":"comp.new","params":{"name":"Plugin","width":32,"height":32,"duration":1,"frameRate":30}}),
+    )["comp"]
+        .clone();
+    let layer = call_json(&mut s, "execute_command", json!({"command":"layer.newSolid","params":{"color":"#ff0000"}}))["layer"].clone();
+    call_json(&mut s, "apply_effect_chain", json!({"comp":comp,"layer":layer,"effects":[{"effect":"org.intstrfloat.motion.tint-test"}]}));
+    let (content, failed) = call(&mut s, "render_frame", json!({"comp":comp,"time":0.5,"max_side":64,"transparent":true}));
+    assert!(!failed);
+    let png = base64::decode(content[0]["data"].as_str().unwrap()).unwrap();
+    let image = image::load_from_memory(&png).unwrap().to_rgba8();
+    let pixel = image.get_pixel(16, 16);
+    assert!(pixel[0] < 5 && pixel[1] > 250 && pixel[2] < 5 && pixel[3] > 250, "{pixel:?}");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn property_group_error_points_to_layer_inspection() {
     let mut s = server();
     call_json(&mut s, "execute_command", json!({"command": "comp.new", "params": {"name": "Main"}}));
@@ -871,7 +969,20 @@ fn autosave_checkpoints_batch_and_partially_failed_tools() {
     let reply = s.handle(&msgs).unwrap();
     assert_eq!(reply.as_array().unwrap().len(), 2);
     let (_, failed) = call(&mut s, "add_keyframe", json!({"layer":"#1","path":"transform/opacity","keys":[{"time":0,"value":37}],"interpolation":"invalid"}));
-    assert!(failed, "the key was added, then the interpolation failed");
+    assert!(failed, "invalid interpolation is rejected before any key is written");
+    let property = call_json(&mut s, "get_property", json!({"layer":"#1","path":"transform/opacity"}));
+    assert!(property["keys"].as_array().unwrap().is_empty(), "atomic key tool must leave no partial edit");
+    // Legacy command_batch intentionally keeps successful earlier commands; even an error
+    // reply must checkpoint those changes, unlike the atomic keyframe helper above.
+    let (_, failed) = call(
+        &mut s,
+        "command_batch",
+        json!({"steps":[
+            {"id":"prop.addKey","params":{"layer":"#1","path":"transform/opacity","time":0,"value":37}},
+            {"id":"no.such.command","params":{}}
+        ]}),
+    );
+    assert!(failed);
     let status = autosave_status(&mut s);
     let mut recovered = server();
     call_json(&mut recovered, "open_project", json!({"path":status["latestPath"]}));

@@ -21,6 +21,9 @@ pub mod base64;
 pub mod bridge;
 pub mod confine;
 mod long_job;
+mod motion_design;
+mod motion_preview;
+mod motion_tools;
 pub mod server;
 pub mod tools;
 

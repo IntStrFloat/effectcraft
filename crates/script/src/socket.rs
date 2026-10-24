@@ -380,7 +380,10 @@ mod tests {
         let host = l.local_addr().unwrap().to_string();
         let (stop, wait) = mpsc::channel::<()>();
         std::thread::spawn(move || {
-            let (_s, _): (TcpStream, _) = l.accept().unwrap();
+            let (peer, _): (TcpStream, _) = l.accept().unwrap();
+            // Receive-buffer inheritance and auto-tuning differ between platforms. Bound the
+            // accepted socket too, before holding it open without consuming any of its data.
+            socket2::SockRef::from(&peer).set_recv_buffer_size(4096).unwrap();
             let _ = wait.recv_timeout(Duration::from_secs(120));
         });
         (host, stop)
@@ -401,12 +404,28 @@ mod tests {
         let start = Instant::now();
         let chunk = [b'x'; 4096];
         let mut sent = 0;
+        let mut blocked_since = None;
+        let mut blocked_probes = 0;
         loop {
             assert!(sent < 16 * 1024 * 1024 && start.elapsed() < Duration::from_secs(5), "could not establish backpressure");
             match stream.write(&chunk) {
                 Ok(0) => panic!("peer closed while establishing backpressure"),
-                Ok(n) => sent += n,
-                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Ok(n) => {
+                    sent += n;
+                    blocked_since = None;
+                    blocked_probes = 0;
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    // One WouldBlock may only mean the local send queue briefly filled while
+                    // the peer's receive window is still accepting data. Return only after
+                    // fresh writes remain blocked; any forward progress restarts the check.
+                    let since = blocked_since.get_or_insert_with(Instant::now);
+                    blocked_probes += 1;
+                    if blocked_probes >= 8 && since.elapsed() >= Duration::from_millis(500) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
                 Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(e) => panic!("establishing backpressure: {e}"),
             }

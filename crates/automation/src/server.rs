@@ -13,7 +13,7 @@ use crate::{Backend, Error, base64};
 /// Protocol revisions we speak, newest first. We answer with the client's if we know it.
 pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "EffectCraft is an After Effects-class motion graphics compositor. Everything is an engine command: command_list discovers ids and params, command_run {id, params} runs them (undoable; command_batch runs several in order). Typical flow: command_run comp.new -> command_run layer.newText / layer.newSolid (returns the layer id) -> set_property / add_keyframe -> command_run effect.apply -> render_preview to look at the result. Inspect with doc_inspect, get_project, get_comp and get_layer (every property node carries its `path`, e.g. `transform/position`, `effects/#1/blurriness`). Times are seconds. In bridge mode (app started with `--control <port>`) screenshot and the ui_* tools show and operate the live window.";
+const INSTRUCTIONS: &str = "EffectCraft builds editable motion graphics from a purpose and vibe. Start with get_capabilities and get_motion_workflow, then plan_motion -> create_motion_scene / animate_layer -> render_storyboard + analyze_scene -> save_project + native Render Queue. Inspect existing work before edits. New tools use comp-time keys; legacy key tools default to layer time. Adobe SDK plugins and native AE projects are unsupported. Everything remains accessible through list_commands / execute_command / batch.";
 
 // JSON-RPC error codes.
 const PARSE_ERROR: i64 = -32700;
@@ -164,13 +164,13 @@ impl McpServer {
                 let version = PROTOCOL_VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(PROTOCOL_VERSIONS.first().copied().unwrap_or("2025-06-18"));
                 let mode = if self.backend.is_bridge() { "bridge" } else { "headless" };
                 let instructions = if self.autosave.is_some() {
-                    format!("{INSTRUCTIONS} Headless auto-save and recovery: {}", self.autosave_info())
+                    format!("{INSTRUCTIONS}\n{}\nHeadless auto-save and recovery: {}", crate::motion_tools::WORKFLOW, self.autosave_info())
                 } else {
-                    INSTRUCTIONS.to_string()
+                    format!("{INSTRUCTIONS}\n{}", crate::motion_tools::WORKFLOW)
                 };
                 Ok(json!({
                     "protocolVersion": version,
-                    "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}},
+                    "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}, "prompts": {"listChanged":false}},
                     "serverInfo": {"name": "effectcraft", "title": format!("EffectCraft ({mode})"), "version": env!("CARGO_PKG_VERSION")},
                     "instructions": instructions,
                     "_meta": {"effectcraftAutoSave": self.autosave_info()},
@@ -218,19 +218,26 @@ impl McpServer {
                     let mut summary = summary;
                     summary["autosave"] = self.autosave_info();
                     *text = Value::String(summary.to_string());
+                    result["structuredContent"] = summary;
                 }
                 Ok(result)
             }
             "resources/list" => Ok(json!({"resources": [
                 {"uri": DOCUMENT_URI, "name": "document", "title": "Project", "description": "The project overview and the active composition (same as doc_inspect).", "mimeType": "application/json"},
                 {"uri": COMMANDS_URI, "name": "commands", "title": "Command catalog", "description": "Every engine command with id, label, menu, shortcut and params (same as command_list).", "mimeType": "application/json"},
+                {"uri":"effectcraft://workflow","name":"motion-workflow","title":"Agent motion workflow","description":"Required startup and full editing/preview/delivery guide for this fork.","mimeType":"text/markdown"},
+                {"uri":"effectcraft://capabilities","name":"capabilities","title":"Actual backend capabilities","description":"Renderer, registered plugins and compatibility limits.","mimeType":"application/json"},
             ]})),
             "resources/templates/list" => Ok(json!({"resourceTemplates": []})),
             "resources/read" => {
                 let uri = params.get("uri").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing `uri`".to_string()))?;
+                if uri == "effectcraft://workflow" {
+                    return Ok(json!({"contents":[{"uri":uri,"mimeType":"text/markdown","text":crate::motion_tools::guide_markdown()}]}));
+                }
                 let tool = match uri {
                     DOCUMENT_URI => "doc_inspect",
                     COMMANDS_URI => "command_list",
+                    "effectcraft://capabilities" => "get_capabilities",
                     _ => return Err((RESOURCE_NOT_FOUND, format!("resource not found: {uri}"))),
                 };
                 match self.guarded(tool, &json!({})) {
@@ -239,7 +246,8 @@ impl McpServer {
                     Err(e) => Err((INTERNAL_ERROR, e.to_string())),
                 }
             }
-            "prompts/list" => Ok(json!({"prompts": []})),
+            "prompts/list" => Ok(crate::motion_tools::prompts()),
+            "prompts/get" => crate::motion_tools::prompt(params).map_err(|e| (INVALID_PARAMS, e.to_string())),
             m => Err((METHOD_NOT_FOUND, format!("method not found: {m}"))),
         }
     }
@@ -249,13 +257,19 @@ impl McpServer {
 pub fn call_result(r: Result<Reply, Error>) -> Value {
     match r {
         Ok(Reply::Json(v)) => {
-            json!({"content": [{"type": "text", "text": v.to_string()}], "isError": v.get("failed").and_then(Value::as_u64).is_some_and(|n| n > 0)})
+            let mut result =
+                json!({"content": [{"type": "text", "text": v.to_string()}], "isError": v.get("failed").and_then(Value::as_u64).is_some_and(|n| n > 0)});
+            if v.is_object() {
+                result["structuredContent"] = v;
+            }
+            result
         }
         Ok(Reply::Image { png, info }) => json!({
             "content": [
                 {"type": "image", "data": base64::encode(&png), "mimeType": "image/png"},
                 {"type": "text", "text": info.to_string()},
             ],
+            "structuredContent":info,
             "isError": false,
         }),
         Err(e) => json!({"content": [{"type": "text", "text": e.to_string()}], "isError": true}),
