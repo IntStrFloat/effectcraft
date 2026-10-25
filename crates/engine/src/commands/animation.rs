@@ -66,8 +66,16 @@ fn save_preset(s: &mut Session, p: &Value) -> Result<Value> {
     if props.is_empty() && effects.is_empty() {
         return Err(bad("anim.savePreset", "select properties or effects to save"));
     }
-    // Key times are stored relative to the earliest key so the preset applies at the CTI.
-    let first = props.iter().flat_map(|(_, _, pr)| pr.keys.iter().map(|k| k.time)).min().unwrap_or(Tick::ZERO);
+    // All selected animation shares one origin, including properties nested in effects.
+    let mut first = props.iter().flat_map(|(_, _, pr)| pr.keys.iter().map(|k| k.time)).min();
+    for (_, g) in &effects {
+        g.walk("", &mut |_, pr| {
+            for k in &pr.keys {
+                first = Some(first.map_or(k.time, |t| t.min(k.time)));
+            }
+        });
+    }
+    let first = first.unwrap_or(Tick::ZERO);
     let props_json: Vec<Value> = props
         .iter()
         .map(|(_, mp, pr)| {
@@ -78,7 +86,18 @@ fn save_preset(s: &mut Session, p: &Value) -> Result<Value> {
             json!({"path": mp, "value": pr.value, "keys": pr.keys, "expression": pr.expr})
         })
         .collect();
-    let fx_json: Vec<Value> = effects.iter().map(|(_, g)| serde_json::to_value(g).unwrap_or_default()).collect();
+    let fx_json: Vec<Value> = effects
+        .iter()
+        .map(|(_, g)| {
+            let mut g = g.clone();
+            g.walk_mut(&mut |pr| {
+                for k in &mut pr.keys {
+                    k.time -= first;
+                }
+            });
+            serde_json::to_value(g).unwrap_or_default()
+        })
+        .collect();
     let name = str_p(p, "name")
         .map(str::to_string)
         .unwrap_or_else(|| std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
@@ -140,6 +159,11 @@ fn apply_preset(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(fx) = l.props.sub_mut("effects") {
                 for g in &effects {
                     let mut g = g.clone();
+                    g.walk_mut(&mut |pr| {
+                        for k in &mut pr.keys {
+                            k.time += lt;
+                        }
+                    });
                     g.reassign_uids(&mut next);
                     next += 1;
                     fx.children.push(Node::Group(g));

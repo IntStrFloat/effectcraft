@@ -1277,6 +1277,8 @@ mod tests_anim_presets;
 #[cfg(test)]
 mod tests_anim_tools;
 #[cfg(test)]
+mod tests_animation_preset_timing;
+#[cfg(test)]
 mod tests_camera_track;
 #[cfg(test)]
 mod tests_codec_options;

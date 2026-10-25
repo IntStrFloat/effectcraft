@@ -1,6 +1,6 @@
 # Roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (fork: motion workflow and multi-frame MCP review) · **Target:** Adobe After Effects 2026
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** patch (fork: reusable effect-preset timing) · **Target:** Adobe After Effects 2026
 
 Forward-looking detail behind the [ROADMAP](../ROADMAP.md). The work list itself, one gap at a
 time, is [gaps.md](gaps.md); the numbers are in [target-app-parity.md](target-app-parity.md).
@@ -87,6 +87,7 @@ To beta (≈ 75% ready and `.aep` opening): **≈ 350–620 h**. To full parity:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | patch | Fork M14: native preset FX keys normalize with leaf keys and follow target CTI, including offset/reversed/stretched layers |
 | 2026-10-24 | minor | Fork M14: editable scene recipes, comp-time animation, structural audits and storyboard review |
 | 2026-10-10 | minor | Alpha gate: six core workflows checked; all pass, stage stays alpha |
 | 2026-10-10 | major | New file: milestones from ROADMAP.md, current focus, next steps with estimates |
